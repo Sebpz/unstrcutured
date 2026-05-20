@@ -268,10 +268,12 @@ public class LobbyManagerTests
     }
 
     [Test]
-    public void CreateLobby_OnServiceException_SetsErrorState()
+    public async Task CreateLobby_OnServiceException_SetsErrorState()
     {
         _mockLobby.NextCreateException = new System.Exception("Rate limited");
-        Assert.ThrowsAsync<System.Exception>(
+        // ThrowsAsync must be awaited; without await the task is fire-and-forget
+        // and the subsequent assertion runs before the exception is observed.
+        await Assert.ThrowsAsync<System.Exception>(
             () => _sut.CreateAndJoinLobbyAsync("My Game", maxPlayers: 4));
         Assert.That(_sut.State, Is.EqualTo(LobbyState.Error));
     }

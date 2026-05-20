@@ -145,7 +145,8 @@ Include at least one entry per category:
 
 ## 5.7 Priority Order (Plan Section 8)
 
-Rank systems for test implementation by: `Criticality × (5 - Testability) / 2`
+Map Criticality to a number first: Critical = 4, High = 3, Medium = 2, Low = 1.
+Then rank by: `CriticalityScore × (5 − Testability) / 2`
 (high criticality + low current testability = highest priority).
 
 Break ties by: connection lifecycle first, anti-cheat second, state sync third.

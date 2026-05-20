@@ -97,7 +97,7 @@ For EACH networked system, ensure the plan includes scenarios covering:
 - [ ] Server rejects a ServerRpc with out-of-range / invalid parameters
 
 ### State Synchronisation
-- [ ] `NetworkVariable` change on server propagates to all clients within 1 frame
+- [ ] `NetworkVariable` change on server propagates to all clients within one network tick (poll with `WaitUntil`, do not assert after a single `yield return null`)
 - [ ] `NetworkVariable` value is correct for a late-joining client
 - [ ] `OnValueChanged` callback fires exactly once per change on each client
 

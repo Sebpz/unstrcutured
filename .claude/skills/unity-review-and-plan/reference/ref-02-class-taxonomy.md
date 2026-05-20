@@ -10,7 +10,7 @@ Build one row per file in the classification table.
 | Category | Rule | Testability |
 |---|---|---|
 | **NetworkBehaviour** | Inherits `NetworkBehaviour` (NGO/Mirror/Fish-Net) | Low — needs runtime & transport |
-| **NetworkObject** | Has `[NetworkObject]` attribute or is registered as prefab | Low |
+| **NetworkObject** | Has a `NetworkObject` component attached (root of a network prefab) or is registered in `NetworkConfig.NetworkPrefabs` | Low |
 | **MonoBehaviour** | Inherits `MonoBehaviour`, not network-aware | Medium — needs GameObject |
 | **ScriptableObject** | Inherits `ScriptableObject` | High — create with `ScriptableObject.CreateInstance<T>()` |
 | **Pure C# / POCO** | No Unity base class, no `using UnityEngine` beyond math | Very High — `new T()` |

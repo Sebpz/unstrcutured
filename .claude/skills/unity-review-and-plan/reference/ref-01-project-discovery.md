@@ -62,6 +62,7 @@ Also check for Unity Gaming Services:
 | `com.unity.services.vivox` | Vivox (voice) |
 | `com.unity.services.matchmaker` | Unity Matchmaker |
 | `com.unity.services.multiplay` | Unity Multiplay (dedicated server) |
+| `com.unity.multiplayer.tools` | Network Simulator + runtime stats (NGO) |
 
 ```bash
 # Fallback: grep for framework-specific types in source

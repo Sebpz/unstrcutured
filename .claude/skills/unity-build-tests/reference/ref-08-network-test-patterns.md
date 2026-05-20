@@ -4,144 +4,189 @@ Patterns for testing networked behaviour without live relay/relay infrastructure
 
 ---
 
-## 8.1 NGO — NetworkTestHarness (InMemoryTransport)
+## 8.1 NGO — NetworkTestHarness (Instance Class)
+
+`IEnumerator` methods cannot have `out` or `ref` parameters (CS1623). The
+solution is an instance-based harness: create one per test class, run it in
+`[UnitySetUp]`, and access results through properties.
 
 Create `Assets/Tests/PlayMode/NetworkTestHarness.cs`:
 
 ```csharp
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using Unity.Netcode;
-using Unity.Netcode.Transports.InMemory;   // NGO 1.x+
+using Unity.Netcode.Transports.InMemory;   // NGO 1.1+
 
-public static class NetworkTestHarness
+public class NetworkTestHarness
 {
-    public static IEnumerator StartHostAndClient(
-        out NetworkManager host, out NetworkManager client)
+    public NetworkManager  Host         { get; private set; }
+    public NetworkManager  Client       { get; private set; }
+    public NetworkManager  SecondClient { get; private set; }
+    public GameObject      LastSpawned  { get; private set; }
+
+    private readonly List<NetworkManager> _all = new();
+
+    // ── Start ───────────────────────────────────────────────────────────────
+
+    public IEnumerator StartHostAndClient()
     {
-        // --- Host ---
-        var hostGo = new GameObject("Host_NetworkManager");
-        host = hostGo.AddComponent<NetworkManager>();
-        var hostTransport = hostGo.AddComponent<InMemoryTransport>();
-        host.NetworkConfig = new NetworkConfig
-        {
-            NetworkTransport = hostTransport
-        };
-        host.StartHost();
+        Host   = CreateManager("Host");
+        Client = CreateManager("Client");
 
-        // --- Client ---
-        var clientGo = new GameObject("Client_NetworkManager");
-        client = clientGo.AddComponent<NetworkManager>();
-        var clientTransport = clientGo.AddComponent<InMemoryTransport>();
-        client.NetworkConfig = new NetworkConfig
-        {
-            NetworkTransport = clientTransport
-        };
-
-        // Point client at the same in-memory channel
+        var hostTransport   = Host.GetComponent<InMemoryTransport>();
+        var clientTransport = Client.GetComponent<InMemoryTransport>();
         clientTransport.ConnectToHost(hostTransport);
-        client.StartClient();
 
-        yield return new WaitUntil(() => client.IsConnectedClient);
+        Host.StartHost();
+        Client.StartClient();
+
+        yield return new WaitUntil(() => Client.IsConnectedClient);
     }
 
-    // Convenience overload for out-params in IEnumerator (use tuple version below)
-    public static IEnumerator Shutdown(NetworkManager host, NetworkManager client)
+    public IEnumerator AddSecondClient()
     {
-        client.Shutdown();
-        yield return null;
-        host.Shutdown();
-        yield return null;
-        Object.Destroy(client.gameObject);
-        Object.Destroy(host.gameObject);
+        SecondClient = CreateManager("Client2");
+        var transport = SecondClient.GetComponent<InMemoryTransport>();
+        transport.ConnectToHost(Host.GetComponent<InMemoryTransport>());
+        SecondClient.StartClient();
+        yield return new WaitUntil(() => SecondClient.IsConnectedClient);
     }
 
-    public static IEnumerator SpawnWithOwnership(
-        string prefabName, ulong ownerClientId, out GameObject spawned)
+    // ── Spawn ────────────────────────────────────────────────────────────────
+
+    public IEnumerator SpawnWithOwnership(string prefabName, ulong ownerClientId)
     {
         var prefab = Resources.Load<GameObject>(prefabName);
-        spawned = Object.Instantiate(prefab);
-        spawned.GetComponent<NetworkObject>().SpawnWithOwnership(ownerClientId);
+        LastSpawned = Object.Instantiate(prefab);
+        LastSpawned.GetComponent<NetworkObject>().SpawnWithOwnership(ownerClientId);
         yield return null;
+    }
+
+    // ── Shutdown ─────────────────────────────────────────────────────────────
+
+    public IEnumerator Shutdown()
+    {
+        foreach (var nm in _all)
+        {
+            if (nm != null && nm.IsListening)
+                nm.Shutdown();
+        }
+        yield return null;
+        foreach (var nm in _all)
+        {
+            if (nm != null)
+                Object.Destroy(nm.gameObject);
+        }
+        _all.Clear();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private NetworkManager CreateManager(string name)
+    {
+        var go        = new GameObject(name + "_NetworkManager");
+        var nm        = go.AddComponent<NetworkManager>();
+        var transport = go.AddComponent<InMemoryTransport>();
+        nm.NetworkConfig = new NetworkConfig { NetworkTransport = transport };
+        _all.Add(nm);
+        return nm;
     }
 }
 ```
 
-> **Note:** NGO's `InMemoryTransport` is available since NGO 1.1.0.  
-> For NGO < 1.1, use the `MockTransport` from the NGO test package or mirror
-> the in-memory approach with a `NetworkTransport` subclass that queues messages
-> in a shared `ConcurrentQueue<byte[]>`.
+> **Note:** `InMemoryTransport` is built into NGO 1.1+.
+> For NGO < 1.1, replace with the `MockTransport` from the NGO test utilities
+> package and connect via its shared in-memory channel.
 
 ---
 
 ## 8.2 Mirror — MemoryTransport Harness
 
-Mirror ships `Mirror.Tests` with `MemoryTransport`. Use it directly:
+Mirror uses static `NetworkServer`/`NetworkClient` classes, not two separate
+`NetworkManager` instances. A single `NetworkManager` drives both sides.
 
 ```csharp
 using System.Collections;
 using UnityEngine;
 using Mirror;
 
-public static class MirrorTestHarness
+public class MirrorTestHarness
 {
-    public static IEnumerator StartServerAndClient(
-        out NetworkManager server, out NetworkManager client)
+    private NetworkManager _manager;
+
+    public IEnumerator Start()
     {
-        // Replace NetworkManager transport with MemoryTransport
-        var serverGo = new GameObject("Server");
-        server = serverGo.AddComponent<NetworkManager>();
-        var transport = serverGo.AddComponent<MemoryTransport>();
+        var go        = new GameObject("MirrorNetworkManager");
+        _manager      = go.AddComponent<NetworkManager>();
+        var transport = go.AddComponent<MemoryTransport>();
         Transport.active = transport;
 
         NetworkServer.Listen(1);
         NetworkClient.Connect("localhost");
 
         yield return new WaitUntil(() => NetworkClient.isConnected);
-        client = server; // Mirror is single-manager; alias for API symmetry
     }
 
-    public static IEnumerator Shutdown()
+    public IEnumerator Shutdown()
     {
         NetworkClient.Disconnect();
         NetworkServer.DisconnectAll();
         NetworkServer.Shutdown();
         yield return null;
+        if (_manager != null) Object.Destroy(_manager.gameObject);
     }
 }
 ```
+
+> Mirror's `NetworkServer` and `NetworkClient` are separate static classes —
+> access server state via `NetworkServer.*` and client state via
+> `NetworkClient.*`. There is no separate "client manager" instance.
 
 ---
 
 ## 8.3 Forcing Disconnect (Host Migration / Reconnect Tests)
 
 ```csharp
-[UnityTest]
-public IEnumerator ClientDisconnect_ServerCleansUpPlayerObject()
+[TestFixture, Category("PlayMode")]
+public class DisconnectTests
 {
-    NetworkManager host = null, client = null;
-    yield return NetworkTestHarness.StartHostAndClient(out host, out client);
+    private NetworkTestHarness _harness;
 
-    ulong clientId = client.LocalClientId;
+    [UnitySetUp]
+    public IEnumerator SetUp()
+    {
+        _harness = new NetworkTestHarness();
+        yield return _harness.StartHostAndClient();
+    }
 
-    // Spawn a player for the client
-    GameObject playerGo = null;
-    yield return NetworkTestHarness.SpawnWithOwnership(
-        "TestNetworkPlayer", clientId, out playerGo);
-    yield return null;
+    [UnityTearDown]
+    public IEnumerator TearDown() => _harness.Shutdown();
 
-    Assert.That(host.ConnectedClients.ContainsKey(clientId), Is.True);
+    [UnityTest]
+    public IEnumerator ClientDisconnect_ServerCleansUpPlayerObject()
+    {
+        ulong clientId = _harness.Client.LocalClientId;
 
-    // Force disconnect
-    client.Shutdown();
-    yield return new WaitUntil(
-        () => !host.ConnectedClients.ContainsKey(clientId), maxWait: 3f);
+        yield return _harness.SpawnWithOwnership("TestNetworkPlayer", clientId);
+        var playerGo = _harness.LastSpawned;
+        Assert.That(_harness.Host.ConnectedClients.ContainsKey(clientId), Is.True);
 
-    Assert.That(host.ConnectedClients.ContainsKey(clientId), Is.False);
-    // Confirm player object was despawned
-    Assert.That(playerGo == null || !playerGo.activeSelf, Is.True);
+        // Force the client off — shut down only the client side
+        _harness.Client.Shutdown();
 
-    yield return NetworkTestHarness.Shutdown(host, client);
+        yield return CoroutineAssert.WaitUntil(
+            () => !_harness.Host.ConnectedClients.ContainsKey(clientId),
+            maxWait: 3f,
+            "Host did not remove disconnected client within 3s");
+
+        Assert.That(_harness.Host.ConnectedClients.ContainsKey(clientId), Is.False);
+        Assert.That(playerGo == null || !playerGo.activeSelf, Is.True);
+
+        // Harness.Shutdown() guards against double-shutdown via IsListening check
+        yield return _harness.Shutdown();
+    }
 }
 ```
 
@@ -153,30 +198,34 @@ public IEnumerator ClientDisconnect_ServerCleansUpPlayerObject()
 [UnityTest]
 public IEnumerator LateJoiner_ReceivesCurrentGameState()
 {
-    NetworkManager host = null, client1 = null;
-    yield return NetworkTestHarness.StartHostAndClient(out host, out client1);
+    var harness = new NetworkTestHarness();
+    yield return harness.StartHostAndClient();
 
-    // Mutate state on host
+    // Mutate state on host before the second client joins
     var gameState = Object.FindFirstObjectByType<NetworkGameState>();
+    Assert.That(gameState, Is.Not.Null, "NetworkGameState not found — ensure it is spawned on start");
     gameState.RoundNumber.Value = 3;
-    gameState.Score.Value = 150;
+    gameState.Score.Value      = 150;
     yield return null;
 
-    // Late joiner connects
-    var lateClientGo = new GameObject("LateClient_NetworkManager");
-    var lateClient = lateClientGo.AddComponent<NetworkManager>();
-    // ... configure transport same as above ...
-    lateClient.StartClient();
-    yield return new WaitUntil(() => lateClient.IsConnectedClient);
+    // Add the late joiner — reuses the host's InMemoryTransport channel
+    yield return harness.AddSecondClient();
 
-    // Late joiner should receive current state immediately
-    var lateGameState = Object.FindFirstObjectByType<NetworkGameState>();
-    Assert.That(lateGameState.RoundNumber.Value, Is.EqualTo(3));
-    Assert.That(lateGameState.Score.Value, Is.EqualTo(150));
+    // NGO sends a full state snapshot on join; wait one tick for delivery
+    yield return CoroutineAssert.WaitUntil(
+        () =>
+        {
+            var gs = Object.FindFirstObjectByType<NetworkGameState>();
+            return gs != null && gs.RoundNumber.Value == 3;
+        },
+        maxWait: 3f,
+        "Late joiner did not receive RoundNumber=3 within 3s");
 
-    yield return NetworkTestHarness.Shutdown(host, client1);
-    lateClient.Shutdown();
-    Object.Destroy(lateClientGo);
+    var lateGs = Object.FindFirstObjectByType<NetworkGameState>();
+    Assert.That(lateGs.RoundNumber.Value, Is.EqualTo(3));
+    Assert.That(lateGs.Score.Value,       Is.EqualTo(150));
+
+    yield return harness.Shutdown();
 }
 ```
 
@@ -188,33 +237,30 @@ public IEnumerator LateJoiner_ReceivesCurrentGameState()
 [UnityTest]
 public IEnumerator ServerRpc_FromNonOwner_IsRejected()
 {
-    NetworkManager host = null, client1 = null;
-    yield return NetworkTestHarness.StartHostAndClient(out host, out client1);
+    var harness = new NetworkTestHarness();
+    yield return harness.StartHostAndClient();
 
-    // Spawn player owned by client1
-    GameObject playerGo = null;
-    yield return NetworkTestHarness.SpawnWithOwnership(
-        "TestNetworkPlayer", client1.LocalClientId, out playerGo);
+    yield return harness.SpawnWithOwnership("TestNetworkPlayer",
+                                            harness.Client.LocalClientId);
+    var combatant = harness.LastSpawned.GetComponent<NetworkCombatant>();
 
-    var combatant = playerGo.GetComponent<NetworkCombatant>();
     bool unauthorisedCallReceived = false;
     combatant.OnUnauthorisedRpcAttempt += () => unauthorisedCallReceived = true;
 
-    // Attempt RPC from HOST (not the owner) — should be rejected
-    combatant.RequestMoveServerRpc(
-        new Vector3(999, 0, 0),
-        new ServerRpcParams
-        {
-            Receive = new ServerRpcReceiveParams { SenderClientId = 0 }
-        });
-
+    // Host (clientId 0) is NOT the owner — call should be rejected
+    combatant.RequestMoveServerRpc(new Vector3(999f, 0f, 0f));
     yield return null;
 
     Assert.That(unauthorisedCallReceived, Is.True);
 
-    yield return NetworkTestHarness.Shutdown(host, client1);
+    yield return harness.Shutdown();
 }
 ```
+
+> To simulate the call arriving from the host-as-non-owner, invoke the RPC
+> directly on the server side. NGO checks `OwnerClientId` inside the generated
+> RPC stub and invokes `OnUnauthorisedRpcAttempt` (an event you add to
+> `NetworkCombatant`) when the sender is not the owner.
 
 ---
 
@@ -224,24 +270,22 @@ public IEnumerator ServerRpc_FromNonOwner_IsRejected()
 [UnityTest]
 public IEnumerator TwoClients_BothReceiveDamageEvent()
 {
-    NetworkManager host = null, clientA = null;
-    yield return NetworkTestHarness.StartHostAndClient(out host, out clientA);
+    var harness = new NetworkTestHarness();
+    yield return harness.StartHostAndClient();
+    yield return harness.AddSecondClient();   // fully wires SecondClient
 
-    NetworkManager clientB = null;
-    // Start second client (same pattern as harness)
-    // ... omitted for brevity — copy harness pattern ...
-
-    // Host fires a ClientRpc
     var broadcaster = Object.FindFirstObjectByType<NetworkEventBroadcaster>();
     int callCount = 0;
     broadcaster.OnDamageEventReceived += () => callCount++;
 
     broadcaster.BroadcastDamageEventClientRpc(damage: 25f, position: Vector3.zero);
 
-    yield return new WaitUntil(() => callCount >= 2, maxWait: 2f);
-    Assert.That(callCount, Is.EqualTo(2)); // both clients received it
+    yield return CoroutineAssert.WaitUntil(() => callCount >= 2,
+        maxWait: 2f, "Both clients did not receive the ClientRpc within 2s");
 
-    yield return NetworkTestHarness.Shutdown(host, clientA);
+    Assert.That(callCount, Is.EqualTo(2));
+
+    yield return harness.Shutdown();
 }
 ```
 
@@ -249,22 +293,35 @@ public IEnumerator TwoClients_BothReceiveDamageEvent()
 
 ## 8.7 Simulating Latency (Advanced)
 
-NGO's `InMemoryTransport` does not simulate latency natively.
-For latency-sensitive tests, use the `NetworkSimulator` package:
+`InMemoryTransport` delivers messages immediately with no artificial delay.
+For latency-sensitive tests install `com.unity.multiplayer.tools` (NGO 1.4+),
+which ships `NetworkSimulator`, and attach it **before** calling `StartHost`.
+
+Flag in the plan if `com.unity.multiplayer.tools` is absent; treat it as a
+recommended package for any project with lag-compensated gameplay.
 
 ```csharp
-// In test setup, configure the NetworkSimulator (NGO 1.4+)
-var simulator = host.GetComponent<NetworkSimulator>();
-if (simulator != null)
+public IEnumerator StartHostAndClientWithSimulator(int delayMs = 100,
+                                                    int jitterMs = 20,
+                                                    int dropPct  = 2)
 {
+    var harness = new NetworkTestHarness();
+
+    // Attach NetworkSimulator before Start so it is active from the first tick
+    var hostGo    = harness.Host.gameObject;     // host created in CreateManager
+    var simulator = hostGo.AddComponent<NetworkSimulator>();
     simulator.ConnectionParameters = new SimulatorParameters
     {
-        PacketDelayMs = 100,
-        PacketJitterMs = 20,
-        PacketDropPercentage = 2
+        PacketDelayMs        = delayMs,
+        PacketJitterMs       = jitterMs,
+        PacketDropPercentage = dropPct
     };
+
+    yield return harness.StartHostAndClient();
+    // harness.Host and harness.Client are now available
 }
 ```
 
-Flag in the plan if `com.unity.multiplayer.tools` (which includes
-`NetworkSimulator`) is not present; add it as a recommended package.
+> **Note:** Attach `NetworkSimulator` before calling `StartHost`. The component
+> is on the `NetworkManager`'s `GameObject`; `GetComponent<NetworkSimulator>()`
+> will return `null` if it was never added.

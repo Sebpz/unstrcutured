@@ -113,12 +113,18 @@ jobs:
 
       - name: Check Coverage Threshold
         run: |
-          # Parse the coverage summary XML and fail if below threshold
-          COVERAGE=$(grep -oP 'line-rate="\K[^"]+' \
-            TestResults/EditMode/coverage.xml | head -1)
-          echo "Line coverage: $COVERAGE"
-          python3 -c "import sys; rate=float('$COVERAGE'); \
-            sys.exit(0 if rate >= 0.75 else 1)"
+          # Extract line-rate from OpenCover XML using python3 (portable; avoids
+          # grep -P which is GNU-only and unavailable on macOS BSD grep)
+          python3 - <<'EOF'
+import sys, re
+xml = open("TestResults/EditMode/coverage.xml").read()
+m = re.search(r'line-rate="([^"]+)"', xml)
+if not m:
+    print("ERROR: line-rate not found in coverage.xml"); sys.exit(1)
+rate = float(m.group(1))
+print(f"Line coverage: {rate:.1%}")
+sys.exit(0 if rate >= 0.75 else 1)
+EOF
 ```
 
 > **Required secrets** in GitHub repo settings:
@@ -148,7 +154,7 @@ RESULTS_DIR="$PROJECT_PATH/TestResults"
 if [[ -z "$UNITY_PATH" ]]; then
   # Common install locations
   for candidate in \
-    "/Applications/Unity/Hub/Editor/$(ls /Applications/Unity/Hub/Editor/ 2>/dev/null | sort -V | tail -1)/Unity.app/Contents/MacOS/Unity" \
+    "/Applications/Unity/Hub/Editor/$(ls /Applications/Unity/Hub/Editor/ 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)/Unity.app/Contents/MacOS/Unity" \
     "/opt/unity/Editor/Unity" \
     "C:/Program Files/Unity/Hub/Editor/*/Editor/Unity.exe"
   do

@@ -118,7 +118,8 @@ namespace Tests.EditMode.Mocks
     {
         public Allocation NextAllocation { get; set; }
         public JoinAllocation NextJoinAllocation { get; set; }
-        public Exception NextException { get; set; }
+        public Exception NextCreateException { get; set; }
+        public Exception NextJoinException   { get; set; }
 
         public int CreateCallCount { get; private set; }
         public int JoinCallCount   { get; private set; }
@@ -127,7 +128,7 @@ namespace Tests.EditMode.Mocks
             int maxConnections, string region = null)
         {
             CreateCallCount++;
-            if (NextException != null) throw NextException;
+            if (NextCreateException != null) throw NextCreateException;
             return Task.FromResult(NextAllocation ?? new Allocation
             {
                 AllocationId = Guid.NewGuid(),
@@ -141,7 +142,7 @@ namespace Tests.EditMode.Mocks
         public Task<JoinAllocation> JoinAllocationAsync(string joinCode)
         {
             JoinCallCount++;
-            if (NextException != null) throw NextException;
+            if (NextJoinException != null) throw NextJoinException;
             return Task.FromResult(NextJoinAllocation ?? new JoinAllocation
             {
                 AllocationId = Guid.NewGuid()
@@ -175,16 +176,22 @@ namespace Tests.EditMode.Mocks
         public Task SignInAnonymouslyAsync(SignInOptions options = null)
         {
             SignInCallCount++;
-            if (NextSignInException != null) throw NextSignInException;
+            if (NextSignInException != null)
+            {
+                SignInFailed?.Invoke(new RequestFailedException(0, NextSignInException.Message));
+                throw NextSignInException;
+            }
             IsSignedIn = true;
+            SignedIn?.Invoke();
             return Task.CompletedTask;
         }
 
         public Task SignOutAsync()
         {
             SignOutCallCount++;
-            IsSignedIn = false;
+            IsSignedIn  = false;
             AccessToken = null;
+            SignedOut?.Invoke();
             return Task.CompletedTask;
         }
 
@@ -201,28 +208,59 @@ namespace Tests.EditMode.Mocks
 
 ---
 
-## 10.5 FakeLobby Helper
+## 10.5 LobbyFactory Helper
 
-A plain C# record for building test lobby data without the SDK:
+`MockLobbyService.NextCreateResult` is typed as `Unity.Services.Lobbies.Models.Lobby`
+(the SDK type). Do not use a plain C# class — it is not assignable to that field.
+Use this factory to create populated `Lobby` instances for tests instead:
 
 ```csharp
+using Unity.Services.Lobbies.Models;
+using System.Collections.Generic;
+
 namespace Tests.EditMode.Mocks
 {
-    public class FakeLobby
+    public static class LobbyFactory
     {
-        public string Id          { get; set; } = "test-lobby-id";
-        public string Name        { get; set; } = "Test Lobby";
-        public int    MaxPlayers  { get; set; } = 4;
-        public int    PlayerCount { get; set; } = 1;
-        public bool   IsPrivate   { get; set; } = false;
+        public static Lobby Create(
+            string id         = "test-lobby-id",
+            string name       = "Test Lobby",
+            int    maxPlayers = 4,
+            int    playerCount = 1,
+            bool   isPrivate  = false)
+        {
+            var players = new List<Player>();
+            for (int i = 0; i < playerCount; i++)
+                players.Add(new Player(id: $"player-{i}"));
 
-        public static FakeLobby Full(int capacity = 4) =>
-            new FakeLobby { MaxPlayers = capacity, PlayerCount = capacity };
+            return new Lobby(
+                id:          id,
+                lobbyCode:   "TESTCODE",
+                name:        name,
+                maxPlayers:  maxPlayers,
+                isPrivate:   isPrivate,
+                players:     players,
+                availableSlots: maxPlayers - playerCount,
+                hostId:      players.Count > 0 ? players[0].Id : null,
+                isLocked:    false,
+                created:     System.DateTime.UtcNow,
+                lastUpdated: System.DateTime.UtcNow,
+                data:        null,
+                environmentId: null,
+                upid:        null,
+                version:     1);
+        }
 
-        public static FakeLobby Empty(int capacity = 4) =>
-            new FakeLobby { MaxPlayers = capacity, PlayerCount = 0 };
+        public static Lobby Full(int capacity = 4)  => Create(maxPlayers: capacity, playerCount: capacity);
+        public static Lobby Empty(int capacity = 4) => Create(maxPlayers: capacity, playerCount: 0);
     }
 }
+```
+
+Usage in tests:
+```csharp
+_mockLobby.NextCreateResult = LobbyFactory.Create(id: "abc123");
+_mockLobby.NextJoinResult   = LobbyFactory.Full(capacity: 4);
 ```
 
 ---

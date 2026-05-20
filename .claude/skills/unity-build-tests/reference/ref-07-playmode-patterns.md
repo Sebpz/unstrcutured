@@ -4,6 +4,9 @@
 
 ## 7.1 PlayMode Test Class Structure
 
+Use an instance `NetworkTestHarness` (defined in ref-08) as a class field.
+`[UnitySetUp]` and `[UnityTearDown]` handle network lifecycle for every test.
+
 ```csharp
 using System.Collections;
 using NUnit.Framework;
@@ -14,51 +17,50 @@ using UnityEngine.SceneManagement;
 [TestFixture, Category("PlayMode")]
 public class PlayerSpawningPlayTests
 {
-    // Shared state created in SetUp, torn down after each test
-    private GameObject _networkManagerGo;
+    private NetworkTestHarness _harness;
 
     [UnitySetUp]
     public IEnumerator SetUp()
     {
-        // Load a minimal test scene OR build the scene in code
-        yield return SceneManager.LoadSceneAsync("Tests/MinimalNetworkScene",
-                                                 LoadSceneMode.Single);
+        _harness = new NetworkTestHarness();
+        yield return _harness.StartHostAndClient();
     }
 
     [UnityTearDown]
-    public IEnumerator TearDown()
-    {
-        // Always shut down networking before destroying objects
-        if (_networkManagerGo != null)
-            Object.Destroy(_networkManagerGo);
-        yield return null;
-    }
+    public IEnumerator TearDown() => _harness.Shutdown();
+}
+```
+
+For scene-based tests, load the scene in `[UnitySetUp]` before starting
+the harness so `NetworkManager` prefabs in the scene are present when the
+host starts:
+
+```csharp
+[UnitySetUp]
+public IEnumerator SetUp()
+{
+    yield return SceneManager.LoadSceneAsync("Tests/MinimalNetworkScene",
+                                             LoadSceneMode.Single);
+    _harness = new NetworkTestHarness();
+    yield return _harness.StartHostAndClient();
 }
 ```
 
 ---
 
-## 7.2 Waiting for Conditions
+## 7.2 Timeout Guard Pattern (Inline)
 
-Prefer `WaitUntil` over fixed frame counts — tests are less brittle:
+`UnityEngine.WaitUntil` has no built-in timeout. For one-off waits, use the
+`CoroutineAssert` helper (defined in section 7.8) rather than a raw
+`WaitUntil`, which can hang the test runner indefinitely:
 
 ```csharp
-// Wait up to 5 seconds for a condition
-yield return new WaitUntil(() => condition);
+// ✗ Can hang forever
+yield return new WaitUntil(() => someCondition);
 
-// With a timeout guard (custom helper)
-IEnumerator WaitForConditionOrTimeout(System.Func<bool> condition,
-                                      float timeoutSec = 5f)
-{
-    float elapsed = 0f;
-    while (!condition() && elapsed < timeoutSec)
-    {
-        elapsed += Time.deltaTime;
-        yield return null;
-    }
-    Assert.That(condition(), Is.True,
-        $"Condition not met within {timeoutSec}s");
-}
+// ✓ Fails clearly after maxWait seconds
+yield return CoroutineAssert.WaitUntil(() => someCondition, maxWait: 5f,
+    "someCondition was not true within 5s");
 ```
 
 ---
@@ -93,12 +95,12 @@ public IEnumerator PlayerDeath_TriggersRespawnSystem_AfterDelay()
     var respawn = Object.FindFirstObjectByType<RespawnSystem>();
     Assert.That(player, Is.Not.Null);
 
-    player.Die(); // force death
-
-    // Respawn should be queued but not immediate
+    player.Die();
     Assert.That(player.IsAlive, Is.False);
 
-    yield return new WaitForSeconds(respawn.RespawnDelay + 0.1f);
+    yield return CoroutineAssert.WaitUntil(() => player.IsAlive,
+        maxWait: respawn.RespawnDelay + 1f,
+        "Player did not respawn within the expected window");
 
     Assert.That(player.IsAlive, Is.True);
 }
@@ -108,34 +110,37 @@ public IEnumerator PlayerDeath_TriggersRespawnSystem_AfterDelay()
 
 ## 7.5 NetworkVariable Sync Test (NGO)
 
-Requires the fake transport harness from `ref-08`.
+NetworkVariables are replicated on the NGO network tick (default 30 Hz), not
+on every Unity frame. Use `CoroutineAssert.WaitUntil` to poll for the
+replicated value rather than yielding a fixed number of frames.
 
 ```csharp
 [UnityTest]
 public IEnumerator NetworkVariable_HealthChange_PropagatestoClient()
 {
-    var (host, client) = yield return NetworkTestHarness.StartHostAndClient();
-
-    // Spawn a player-like object on the host
-    var prefab = Resources.Load<GameObject>("TestNetworkPlayer");
+    var prefab   = Resources.Load<GameObject>("TestNetworkPlayer");
     var instance = Object.Instantiate(prefab);
     instance.GetComponent<NetworkObject>().Spawn();
-
     yield return null; // let spawn propagate
 
-    // Mutate on host
     var hostHealth = instance.GetComponent<NetworkHealthComponent>();
     hostHealth.CurrentHealth.Value = 75f;
 
-    yield return null; // one frame for sync
+    // Poll until the client-side object reflects the change
+    yield return CoroutineAssert.WaitUntil(
+        () =>
+        {
+            var objs = Object.FindObjectsByType<NetworkHealthComponent>(
+                FindObjectsSortMode.None);
+            return objs.Length > 0 && objs[0].CurrentHealth.Value == 75f;
+        },
+        maxWait: 2f,
+        "Health did not replicate within 2s (check NGO tick rate)");
 
-    // Observe on client
     var clientObjects = Object.FindObjectsByType<NetworkHealthComponent>(
         FindObjectsSortMode.None);
     Assert.That(clientObjects, Has.Length.EqualTo(1));
     Assert.That(clientObjects[0].CurrentHealth.Value, Is.EqualTo(75f));
-
-    yield return NetworkTestHarness.Shutdown(host, client);
 }
 ```
 
@@ -147,26 +152,20 @@ public IEnumerator NetworkVariable_HealthChange_PropagatestoClient()
 [UnityTest]
 public IEnumerator ServerRpc_DealDamage_OnlyExecutesOnServer()
 {
-    var (host, client) = yield return NetworkTestHarness.StartHostAndClient();
+    yield return _harness.SpawnWithOwnership("TestNetworkPlayer",
+                                             _harness.Client.LocalClientId);
+    var combatant = _harness.LastSpawned.GetComponent<NetworkCombatant>();
 
-    // Spawn a network object owned by the client
-    var playerGo = yield return NetworkTestHarness.SpawnWithOwnership(
-        prefabName: "TestNetworkPlayer",
-        ownerClientId: client.LocalClientId);
-
-    var combatant = playerGo.GetComponent<NetworkCombatant>();
     bool serverReceived = false;
     combatant.OnServerDamageReceived += () => serverReceived = true;
 
-    // Call the ServerRpc from the owning client side
     combatant.RequestDealDamageServerRpc(targetId: 0, amount: 25f);
 
-    yield return new WaitUntil(() => serverReceived, maxWait: 2f);
+    yield return CoroutineAssert.WaitUntil(() => serverReceived,
+        maxWait: 2f, "ServerRpc was not received within 2s");
 
     Assert.That(serverReceived, Is.True);
     Assert.That(combatant.CurrentHealth, Is.EqualTo(75f));
-
-    yield return NetworkTestHarness.Shutdown(host, client);
 }
 ```
 
@@ -178,27 +177,24 @@ public IEnumerator ServerRpc_DealDamage_OnlyExecutesOnServer()
 [UnityTest]
 public IEnumerator Server_LoadsGameScene_AllClientsFollowTransition()
 {
-    var (host, client) = yield return NetworkTestHarness.StartHostAndClient();
+    _harness.Host.SceneManager.LoadScene("GameScene", LoadSceneMode.Single);
 
-    // Host triggers networked scene load
-    host.SceneManager.LoadScene("GameScene", LoadSceneMode.Single);
-
-    // Both host and client should end up in GameScene
-    yield return new WaitUntil(
+    yield return CoroutineAssert.WaitUntil(
         () => SceneManager.GetActiveScene().name == "GameScene",
-        maxWait: 10f);
+        maxWait: 10f,
+        "Clients did not follow server scene transition within 10s");
 
     Assert.That(SceneManager.GetActiveScene().name, Is.EqualTo("GameScene"));
-
-    yield return NetworkTestHarness.Shutdown(host, client);
 }
 ```
 
 ---
 
-## 7.8 Coroutine Test Helper
+## 7.8 CoroutineAssert Helper
 
-Avoid duplicating timeout logic — add this helper to `Assets/Tests/PlayMode/`:
+Add `Assets/Tests/PlayMode/CoroutineAssert.cs`. All PlayMode tests should use
+this instead of raw `WaitUntil` or polling loops to ensure failures surface
+with a useful message rather than an infinite hang.
 
 ```csharp
 using System;
@@ -228,21 +224,26 @@ public static class CoroutineAssert
 
 ## 7.9 Lobby Integration Test (PlayMode, mocked service)
 
-If `LobbyManager` uses a constructor-injected `ILobbyService`:
-
 ```csharp
 [UnityTest]
 public IEnumerator LobbyManager_CreateLobby_ShowsLobbyScreenOnSuccess()
 {
     var mock = new MockLobbyService();
-    mock.NextCreateResult = new FakeLobby { Id = "room-99", PlayerCount = 1 };
+    mock.NextCreateResult = new Lobby
+    {
+        Id         = "room-99",
+        Name       = "Test Room",
+        MaxPlayers = 4
+    };
 
-    var go = new GameObject("LobbyManager");
+    var go      = new GameObject("LobbyManager");
     var manager = go.AddComponent<LobbyManager>();
-    manager.Inject(mock);  // or however DI is wired
+    manager.Inject(mock);
 
     manager.CreateLobby("Test Room", maxPlayers: 4);
-    yield return new WaitUntil(() => manager.State == LobbyState.InLobby);
+
+    yield return CoroutineAssert.WaitUntil(() => manager.State == LobbyState.InLobby,
+        maxWait: 3f, "Lobby did not reach InLobby state within 3s");
 
     Assert.That(manager.CurrentLobbyId, Is.EqualTo("room-99"));
     Object.Destroy(go);

@@ -18,8 +18,8 @@ references:
   - reference/ref-11-coverage-evaluation.md
 ---
 
-Parse arguments: set MAX_PLAN_PASSES and MAX_BUILD_PASSES from the first two
-space-separated integers in the invocation arguments. Default both to 3 if absent.
+Parse arguments: read the `max-plan-passes` and `max-build-passes` named
+arguments declared in the YAML header. Default both to 3 if absent.
 
 ---
 

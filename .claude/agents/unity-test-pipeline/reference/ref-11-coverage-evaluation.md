@@ -123,7 +123,7 @@ test method exists in `Assets/Tests/`:
 grep -c "Scenario ID:" UNITY_TEST_PLAN.md
 
 # Count test methods
-grep -rc "\[Test\]\|\[UnityTest\]" Assets/Tests/ --include="*.cs"
+grep -Erc "\[Test\]|\[UnityTest\]" Assets/Tests/ --include="*.cs"
 ```
 
 - Award 1 pt per EditMode scenario that has a `[Test]` method with a real assertion
