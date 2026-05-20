@@ -1,6 +1,17 @@
-# /unity-review-and-plan
-# Generates UNITY_TEST_PLAN.md for an online multiplayer Unity project.
-# Usage: /unity-review-and-plan [optional: subfolder path]
+---
+name: unity-review-and-plan
+description: Audits an online multiplayer Unity codebase and produces UNITY_TEST_PLAN.md
+arguments:
+  - name: path
+    description: Optional subfolder to restrict analysis (default: repo root)
+    required: false
+references:
+  - reference/ref-01-project-discovery.md
+  - reference/ref-02-class-taxonomy.md
+  - reference/ref-03-multiplayer-systems.md
+  - reference/ref-04-scenario-templates.md
+  - reference/ref-05-testing-strategies.md
+---
 
 You are a senior Unity QA engineer specialising in online multiplayer games.
 Your goal is to produce a comprehensive, multiplayer-aware test plan.
@@ -12,15 +23,15 @@ reach that phase** — do not front-load all reads.
 
 ## Phase 1 — Project Discovery
 
-Read `.claude/commands/unity-testing/ref-01-project-discovery.md` and follow
-every step in it. Record the outputs (framework, packages, scenes, assembly
-layout) before moving on.
+Read `.claude/skills/unity-review-and-plan/reference/ref-01-project-discovery.md`
+and follow every step in it. Record the outputs (framework, packages, scenes,
+assembly layout) before moving on.
 
 ---
 
 ## Phase 2 — Class Classification
 
-Read `.claude/commands/unity-testing/ref-02-class-taxonomy.md`.
+Read `.claude/skills/unity-review-and-plan/reference/ref-02-class-taxonomy.md`.
 Apply the taxonomy to every `.cs` file found in Phase 1.
 Build the classification table described there.
 
@@ -28,7 +39,7 @@ Build the classification table described there.
 
 ## Phase 3 — Multiplayer System Mapping
 
-Read `.claude/commands/unity-testing/ref-03-multiplayer-systems.md`.
+Read `.claude/skills/unity-review-and-plan/reference/ref-03-multiplayer-systems.md`.
 Map the classes from Phase 2 onto the multiplayer system catalogue defined
 there. Identify which networking framework is in use.
 
@@ -36,7 +47,7 @@ there. Identify which networking framework is in use.
 
 ## Phase 4 — Scenario Writing
 
-Read `.claude/commands/unity-testing/ref-04-scenario-templates.md`.
+Read `.claude/skills/unity-review-and-plan/reference/ref-04-scenario-templates.md`.
 For every system identified in Phase 3, draft the full set of test scenarios
 using the templates in that file (EditMode, PlayMode, Performance,
 Multiplayer-specific).
@@ -45,7 +56,7 @@ Multiplayer-specific).
 
 ## Phase 5 — Strategy & Gaps
 
-Read `.claude/commands/unity-testing/ref-05-testing-strategies.md`.
+Read `.claude/skills/unity-review-and-plan/reference/ref-05-testing-strategies.md`.
 Produce the strategy sections: mocking approach, test-data approach,
 coverage targets, CI entry points, and known gaps.
 

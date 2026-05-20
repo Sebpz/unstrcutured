@@ -1,16 +1,25 @@
-# /unity-test-pipeline
-#
-# Iterative planning + build pipeline for online multiplayer Unity projects.
-#
-# Usage: /unity-test-pipeline [max-plan-passes] [max-build-passes]
-#   Defaults: 3 plan passes, 3 build passes
-#   Example:  /unity-test-pipeline 4 2
-#
-# Arguments are the first two space-separated integers in $ARGUMENTS.
-# If omitted, use 3 for each.
+---
+name: unity-test-pipeline
+description: Coverage-gated iterative pipeline — runs planning and build skills in loops until test coverage meets threshold or max passes is reached
+type: agent
+arguments:
+  - name: max-plan-passes
+    description: Maximum number of planning loop iterations
+    required: false
+    default: "3"
+  - name: max-build-passes
+    description: Maximum number of build loop iterations
+    required: false
+    default: "3"
+skills:
+  - unity-review-and-plan
+  - unity-build-tests
+references:
+  - reference/ref-11-coverage-evaluation.md
+---
 
-Parse $ARGUMENTS: set MAX_PLAN_PASSES and MAX_BUILD_PASSES from the first two
-integers found. Default both to 3 if absent.
+Parse arguments: set MAX_PLAN_PASSES and MAX_BUILD_PASSES from the first two
+space-separated integers in the invocation arguments. Default both to 3 if absent.
 
 ---
 
@@ -18,8 +27,8 @@ integers found. Default both to 3 if absent.
 
 ### A.0  Initialise tracking
 
-Read `.claude/commands/unity-testing/ref-11-coverage-evaluation.md` now and
-keep it in context for the rest of this skill.
+Read `.claude/agents/unity-test-pipeline/reference/ref-11-coverage-evaluation.md`
+now and keep it in context for the rest of this agent.
 
 Create `UNITY_TEST_STATUS.md` at the repo root with this skeleton:
 
@@ -49,14 +58,17 @@ Repeat until PLAN_PASS >= MAX_PLAN_PASSES OR last recorded plan score >= 85%:
 
   **Execute the pass:**
   - If PLAN_PASS == 1:
-    Follow every phase in `.claude/commands/unity-review-and-plan.md` in full.
+    Follow every phase in `.claude/skills/unity-review-and-plan/SKILL.md` in full.
     This produces or overwrites `UNITY_TEST_PLAN.md`.
   - If PLAN_PASS >= 2:
     Read `UNITY_TEST_PLAN.md`. Identify all gaps using the gap checklist in
     ref-11 Section 11.2. For each gap, fill it in directly in the plan file
     using the reference files for guidance:
-    - Missing system scenarios → ref-03 + ref-04
-    - Incomplete strategy sections → ref-05
+    - Missing system scenarios →
+      `.claude/skills/unity-review-and-plan/reference/ref-03-multiplayer-systems.md`
+      and `.claude/skills/unity-review-and-plan/reference/ref-04-scenario-templates.md`
+    - Incomplete strategy sections →
+      `.claude/skills/unity-review-and-plan/reference/ref-05-testing-strategies.md`
     - Template placeholder text → replace with real class names from codebase
     Do NOT re-run discovery or re-classify files already classified.
 
@@ -102,13 +114,15 @@ Repeat until BUILD_PASS >= MAX_BUILD_PASSES OR last recorded build score >= 85%:
 
   **Execute the pass:**
   - If BUILD_PASS == 1:
-    Follow every phase in `.claude/commands/unity-build-tests.md` in full.
+    Follow every phase in `.claude/skills/unity-build-tests/SKILL.md` in full.
   - If BUILD_PASS >= 2:
     Read `UNITY_TEST_PLAN.md`. Apply the Build Coverage Rubric from ref-11
     Section 11.4 to find untranslated plan scenarios. For each gap:
     - Missing test method → add it to the appropriate existing `.cs` file
-    - Missing mock file → generate it (ref-10)
-    - Missing CI file → generate it (ref-09)
+    - Missing mock file → generate it using
+      `.claude/skills/unity-build-tests/reference/ref-10-mock-patterns.md`
+    - Missing CI file → generate it using
+      `.claude/skills/unity-build-tests/reference/ref-09-ci-automation.md`
     Do NOT regenerate files that already pass the rubric for their system.
 
   **Score the build:** Apply the Build Coverage Rubric from ref-11 Section 11.4.
@@ -137,6 +151,8 @@ For every `.cs` file under `Assets/Tests/`:
 4. Verify no test reads from `Resources.Load` for test data when a
    `ScriptableObject.CreateInstance<T>()` approach is feasible.
 5. Apply fixes inline.
+
+Check every item in ref-11 Section 11.6 (Final Script Review Checklist).
 
 Append to UNITY_TEST_STATUS.md:
 ```markdown
